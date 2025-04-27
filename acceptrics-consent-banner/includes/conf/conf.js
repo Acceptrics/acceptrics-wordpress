@@ -1,0 +1,1 @@
+window.acceptrics = {};localStorage.setItem("__acceptrics_conf", JSON.stringify({"gcmAdvanced":"false","backgroundColor":"#333","fontColor":"#ffffff","geoArea":"worldwide","accountNum":"p66i76uc","useTranslation":false,"bannerStyle":""})); document.addEventListener("__acceptrics_loaded", () =>{window.acceptrics.initializeSettings();});
