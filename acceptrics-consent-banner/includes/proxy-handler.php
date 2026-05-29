@@ -86,7 +86,7 @@ add_action('init', function () {
     // Must always reach fps.goog regardless of circuit-breaker state — Google
     // expects a passthrough response, not a local echo or a CDN redirect.
     if ($qs === 'validate_geo=healthy') {
-        acceptrics_proxy_to_fps($effective, $sub, $qs);
+        acceptrics_proxy_to_fps($effective, $uri_path, $qs);
         exit;
     }
 
@@ -111,17 +111,18 @@ add_action('init', function () {
         exit;
     }
 
-    acceptrics_proxy_to_fps($effective, $sub, $qs);
+    acceptrics_proxy_to_fps($effective, $uri_path, $qs);
     exit;
 }, 1);
 
 // ---------------------------------------------------------------------------
-// Forward a request to $tag_id.fps.goog and stream the response back.
+// Forward a request to fps.goog and stream the response back.
+// The full measurement path is preserved in the URL; the tag ID goes in the
+// X-Gtg-Tag-Id header per the GTG spec.
 // ---------------------------------------------------------------------------
 
-function acceptrics_proxy_to_fps($tag_id, $sub_path, $query_string) {
-    $fps_host = strtolower($tag_id) . '.fps.goog';
-    $target   = 'https://' . $fps_host . $sub_path;
+function acceptrics_proxy_to_fps($tag_id, $uri_path, $query_string) {
+    $target = 'https://fps.goog' . $uri_path;
     if ($query_string !== '') {
         $target .= '?' . $query_string;
     }
