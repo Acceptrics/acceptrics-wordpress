@@ -146,6 +146,7 @@ function acceptrics_proxy_to_fps($tag_id, $sub_path, $query_string) {
     }
     $headers[] = 'Accept-Encoding: identity';
     $headers[] = 'X-Gtg-Developer-Id: dYWU2OD';
+    $headers[] = 'X-Gtg-Tag-Id: ' . $tag_id;
 
     // Forward only analytics cookies — never WordPress auth tokens.
     // GDPR data minimisation: fps.goog does not need session auth credentials.
