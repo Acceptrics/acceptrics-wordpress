@@ -56,6 +56,15 @@
         ref.insertBefore(s, ref.firstChild);
     }
 
+    // GTG spec Script 1: register tag IDs in google_tags_first_party to prevent
+    // race conditions when the same tag is also loaded third-party elsewhere.
+    function injectRaceCondition(ids) {
+        window['google_tags_first_party'] = window['google_tags_first_party'] || [];
+        if (typeof window['google_tags_first_party'].push === 'function') {
+            window['google_tags_first_party'].push.apply(window['google_tags_first_party'], ids);
+        }
+    }
+
     // ---------------------------------------------------------------------------
     // Tag initialization
     // ---------------------------------------------------------------------------
@@ -66,15 +75,26 @@
         var tagPaths   = cfg.tagPaths || {};
 
         if (cfg.tagType === 'gtm') {
-            var gtmSrc = (route === 'relay')
-                ? (primaryUrl + '/gtm.js?id=' + cfg.primaryTag)
-                : cfg.directGtmSrc;
-            // GTM self-initializes via its own snippet logic; just load the script.
-            loadScript(gtmSrc);
+            if (route === 'relay') {
+                // GTG spec: Script 1 (race condition), then Script 2 (GTM IIFE).
+                // Tag ID must NOT appear in the network request URL.
+                injectRaceCondition(ids);
+                window.dataLayer = window.dataLayer || [];
+                window.dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});
+                var f = document.getElementsByTagName('script')[0];
+                var j = document.createElement('script');
+                j.async = true;
+                j.src = primaryUrl + '/';
+                f.parentNode.insertBefore(j, f);
+            } else {
+                loadScript(cfg.directGtmSrc);
+            }
             return;
         }
 
         if (route === 'relay') {
+            // GTG spec: Script 1 (race condition) before loading the tag.
+            injectRaceCondition(ids);
             // Load the primary script; once ready, configure every tag with its
             // own per-tag relay URL so hits route to the right fps.goog endpoint.
             loadScript(primaryUrl + '/', function () {

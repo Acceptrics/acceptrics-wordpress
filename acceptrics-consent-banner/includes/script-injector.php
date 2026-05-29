@@ -55,25 +55,38 @@ function acceptrics_inject_relay_script() {
     }
 }
 
+/**
+ * Emit the GTG spec race-condition prevention script (Script 1).
+ * Registers all tag IDs in google_tags_first_party before any tag loads.
+ */
+function acceptrics_gtg_race_condition_script($tag_ids) {
+    $json = wp_json_encode(array_values((array) $tag_ids));
+    return '<script>(function(w,i,g){w[g]=w[g]||[];if(typeof w[g].push==\'function\')w[g].push.apply(w[g],i)})(window,' . $json . ',\'google_tags_first_party\');</script>' . "\n";
+}
+
 function acceptrics_inject_dns_relay_script($tag_id, $tag_ids, $hostname) {
-    $safe_tag  = esc_attr($tag_id);
     $safe_host = esc_attr($hostname);
-    $primary   = esc_attr($tag_ids[0]);
+
+    // Script 1: race condition prevention (GTG spec, both GTM and non-GTM).
+    echo acceptrics_gtg_race_condition_script($tag_ids); // phpcs:ignore WordPress.Security.EscapeOutput
 
     if (strpos($tag_id, 'GTM-') === 0) {
+        // Script 2: GTM IIFE — no tag ID in the URL per GTG spec.
         ?>
 <!-- Google Tag Manager (via Acceptrics Relay) -->
-<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+<script>(function(w,d,s,l){w[l]=w[l]||[];w[l].push({'gtm.start':
 new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-'https://<?php echo $safe_host; ?>/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-})(window,document,'script','dataLayer','<?php echo $safe_tag; ?>');</script>
+j=d.createElement(s);j.async=true;j.src=
+'https://<?php echo $safe_host; ?>/';f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer');</script>
 <!-- End Google Tag Manager -->
         <?php
     } else {
+        // Script 2: load tag through relay (trailing slash = measurement path root).
+        // Script 3: configure and initialise.
         ?>
 <!-- Google tag (via Acceptrics Relay) -->
-<script async src="https://<?php echo $safe_host; ?>"></script>
+<script async src="https://<?php echo $safe_host; ?>/"></script>
 <script>
 window.dataLayer = window.dataLayer || [];
 function gtag(){dataLayer.push(arguments);}
@@ -140,24 +153,30 @@ gtag('config', '<?php echo esc_js($tid); ?>');
         return;
     }
 
+    // Script 1: race condition prevention (GTG spec, both GTM and non-GTM).
+    echo acceptrics_gtg_race_condition_script($tag_ids); // phpcs:ignore WordPress.Security.EscapeOutput
+
     if (strpos($tag_id, 'GTM-') === 0) {
-        $safe_base = esc_attr($primary_relay_url);
-        $safe_tag  = esc_attr($tag_id);
+        // Script 2: GTM IIFE — measurement path root, no tag ID in URL per GTG spec.
+        $safe_base = esc_attr(rtrim($primary_relay_url, '/'));
         ?>
 <!-- Google Tag Manager (via Acceptrics Relay) -->
-<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+<script>(function(w,d,s,l){w[l]=w[l]||[];w[l].push({'gtm.start':
 new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-'<?php echo $safe_base; ?>/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-})(window,document,'script','dataLayer','<?php echo $safe_tag; ?>');</script>
+j=d.createElement(s);j.async=true;j.src=
+'<?php echo $safe_base; ?>/';f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer');</script>
 <!-- End Google Tag Manager -->
         <?php
         return;
     }
+
+    // Script 2: one async load per relay path (measurement path with trailing slash).
+    // Script 3: configure and initialise each tag with its per-tag relay URL.
     ?>
 <!-- Google tag (via Acceptrics Relay) -->
 <?php foreach ($tag_ids as $tid) :
-    $src = esc_attr(($tag_relay_urls[$tid] ?? $primary_relay_url) . '/');
+    $src = esc_attr(rtrim($tag_relay_urls[$tid] ?? $primary_relay_url, '/') . '/');
 ?>
 <script async src="<?php echo $src; ?>"></script>
 <?php endforeach; ?>
