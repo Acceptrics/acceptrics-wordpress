@@ -1,12 +1,15 @@
 <?php
 /**
  * Plugin Name: Acceptrics Consent Banner
- * Description: Acceptrics Cookie Banner is the easiest way for privacy compliance.
- * Version: 1.0
- * Author: <href="https://acceptrics.com">Acceptrics</a>
+ * Description: GDPR-compliant consent banner with built-in analytics recovery — recover data lost to ad blockers without any DNS changes.
+ * Version: 2.9
+ * Author: <a href="https://acceptrics.com">Acceptrics</a>
  * License: GPL-2.0+
  * License URI: http://www.gnu.org/licenses/gpl-2.0.txt
  * Text Domain: acceptrics-consent-banner
+ * Requires at least: 5.9
+ * Tested up to: 6.8
+ * Requires PHP: 7.4
  */
 
 /*
@@ -25,47 +28,45 @@ along with Acceptrics Consent Banner. If not, see http://www.gnu.org/licenses/gp
 */
 
 if (!defined('ABSPATH')) {
-    exit; // Prevent direct access
+    exit;
 }
 
-// Define plugin constants
+define('ACCEPTRICS_VERSION', '2.9');
 define('ACCEPTRICS_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ACCEPTRICS_PLUGIN_URL', plugin_dir_url(__FILE__));
-define('ACCEPTRICS_TRANSIENT_KEY', 'acceptrics_cached_script');
-define('ACCEPTRICS_TRANSIENT_EXPIRATION', 6 * HOUR_IN_SECONDS);
 
-// Include required files
+require_once ACCEPTRICS_PLUGIN_DIR . 'includes/relay-api.php';
+require_once ACCEPTRICS_PLUGIN_DIR . 'includes/proxy-handler.php';
+require_once ACCEPTRICS_PLUGIN_DIR . 'includes/detect-handler.php';
 require_once ACCEPTRICS_PLUGIN_DIR . 'includes/admin-settings.php';
 require_once ACCEPTRICS_PLUGIN_DIR . 'includes/script-injector.php';
 
-// Activation Hook
 function acceptrics_activate() {
-    // Set an option to show the "Settings" link after activation
     update_option('acceptrics_show_activation_notice', true);
 }
 register_activation_hook(__FILE__, 'acceptrics_activate');
 
-// Deactivation Hook
 function acceptrics_deactivate() {
-    delete_transient(ACCEPTRICS_TRANSIENT_KEY); // Clear cached script
-    delete_option('acceptrics_show_activation_notice'); // Remove activation flag
+    delete_option('acceptrics_show_activation_notice');
 }
 register_deactivation_hook(__FILE__, 'acceptrics_deactivate');
 
-// Display an admin notice after activation
 function acceptrics_admin_notice() {
     if (get_option('acceptrics_show_activation_notice')) {
+        $account_id   = get_option('acceptrics_account_id', '');
+        $settings_url = esc_url(admin_url('options-general.php?page=acceptrics-consent-banner'));
         ?>
         <div class="updated notice is-dismissible">
             <p>
-                <strong>Acceptrics Consent Banner Activated!</strong>  
-                <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner')); ?>">
-                    Configure the plugin settings here.
-                </a>
+                <strong>Acceptrics Consent Banner activated!</strong>
+                <?php if (empty($account_id)) : ?>
+                    <a href="<?php echo $settings_url; ?>">Enter your account code to get started.</a>
+                <?php else : ?>
+                    <a href="<?php echo $settings_url; ?>">View settings.</a>
+                <?php endif; ?>
             </p>
         </div>
         <?php
-        // Remove the flag so the message is shown only once
         delete_option('acceptrics_show_activation_notice');
     }
 }
