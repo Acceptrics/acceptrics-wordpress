@@ -57,15 +57,6 @@ add_action('init', function () {
         $sub = substr($uri_path, strlen($matched_prefix) - 1);
     }
 
-    // Local health-check — never forwarded to Google.
-    if ($sub === '/healthy') {
-        status_header(200);
-        header('Content-Type: text/plain; charset=utf-8');
-        header('Cache-Control: no-store');
-        echo 'ok';
-        exit;
-    }
-
     // -----------------------------------------------------------------------
     // Request budget — optional circuit breaker (0 = disabled).
     // -----------------------------------------------------------------------

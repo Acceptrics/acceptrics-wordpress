@@ -218,8 +218,9 @@ function acceptrics_inject_adaptive_script($tag_id, $tag_ids, $relay_base, $degr
         'directTtlMs'     => (int) get_option('acceptrics_adaptive_direct_ttl_s', 86400) * 1000,
         'relayTtlMs'      => (int) get_option('acceptrics_adaptive_relay_ttl_s', 14400) * 1000,
         'statsSampleRate' => (float) get_option('acceptrics_adaptive_stats_sample_rate', 0.10),
-        'requireFpCookie' => (bool) get_option('acceptrics_adaptive_require_fp_cookie', false),
-        'statsUrl'        => admin_url('admin-ajax.php'),
+        'requireFpCookie'    => (bool) get_option('acceptrics_adaptive_require_fp_cookie', false),
+        'consentModeEnabled' => (bool) get_option('acceptrics_consent_mode_enabled', true),
+        'statsUrl'           => admin_url('admin-ajax.php'),
     ];
 
     $router_file = plugin_dir_path(__FILE__) . 'js/adaptive-router.js';

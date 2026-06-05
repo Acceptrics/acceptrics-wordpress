@@ -20,6 +20,7 @@ function acceptrics_register_settings() {
     ]);
     register_setting('acceptrics_settings_group', 'acceptrics_enable_banner');
     register_setting('acceptrics_settings_group', 'acceptrics_blocker_detect_enabled');
+    register_setting('acceptrics_settings_group', 'acceptrics_consent_mode_enabled');
 }
 add_action('admin_init', 'acceptrics_register_settings');
 
@@ -102,7 +103,8 @@ function acceptrics_settings_page() {
     $token_connected    = !empty(get_option('acceptrics_api_token', ''));
 
     // Blocker detection settings + report stats
-    $detect_enabled = (bool) get_option('acceptrics_blocker_detect_enabled', false);
+    $detect_enabled        = (bool) get_option('acceptrics_blocker_detect_enabled', false);
+    $consent_mode_enabled  = (bool) get_option('acceptrics_consent_mode_enabled', true);
     $detect_stats   = (array) get_option('acceptrics_detect_daily', []);
     krsort($detect_stats);
     $detect_recent     = array_slice($detect_stats, 0, 7, true);
@@ -563,6 +565,18 @@ function acceptrics_settings_page() {
                             Samples 10% of page loads to estimate how many visitors have ad blockers.
                             Results appear in the <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner&tab=report')); ?>">Report</a> tab.
                             Adds ~1ms on sampled visits only.
+                        </div>
+                    </div>
+                </div>
+                <div class="acpt-toggle-row">
+                    <input type="checkbox" name="acceptrics_consent_mode_enabled" id="acceptrics_consent_mode_enabled"
+                           value="1" <?php checked(1, $consent_mode_enabled); ?> style="margin-top:2px;" />
+                    <div>
+                        <label for="acceptrics_consent_mode_enabled">Enable Google Consent Mode</label>
+                        <div class="acpt-toggle-desc">
+                            Sets consent defaults to <code>denied</code> before Google tags load, then updates
+                            when the visitor makes a choice. Disable only if you manage consent signals yourself
+                            and do not want Acceptrics to call <code>gtag('consent', 'default', &hellip;)</code>.
                         </div>
                     </div>
                 </div>

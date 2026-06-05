@@ -13,35 +13,40 @@
 
     // ---------------------------------------------------------------------------
     // Consent defaults — fired before Google scripts load.
+    // Skipped when consentModeEnabled is explicitly false (customer manages
+    // consent signals themselves and does not want Acceptrics to call
+    // gtag('consent', 'default', …)).
     // ---------------------------------------------------------------------------
 
-    gtag('consent', 'default', {
-        ad_storage:        'denied',
-        ad_user_data:      'denied',
-        ad_personalization: 'denied',
-        analytics_storage: 'denied',
-        wait_for_update:   500,
-    });
+    if (cfg.consentModeEnabled !== false) {
+        gtag('consent', 'default', {
+            ad_storage:        'denied',
+            ad_user_data:      'denied',
+            ad_personalization: 'denied',
+            analytics_storage: 'denied',
+            wait_for_update:   500,
+        });
 
-    function applyStoredConsent() {
-        try {
-            var raw = localStorage.getItem('__acceptrics_settings');
-            if (!raw) return;
-            var s = JSON.parse(raw);
-            if (!s || !s.purposes) return;
-            var analyticsOk = s.purposes.analytics === 'accepted';
-            var adsOk       = s.purposes.ads === 'accepted';
-            gtag('consent', 'update', {
-                analytics_storage:  analyticsOk ? 'granted' : 'denied',
-                ad_storage:         adsOk ? 'granted' : 'denied',
-                ad_user_data:       adsOk ? 'granted' : 'denied',
-                ad_personalization: adsOk ? 'granted' : 'denied',
-            });
-        } catch (e) {}
+        function applyStoredConsent() {
+            try {
+                var raw = localStorage.getItem('__acceptrics_settings');
+                if (!raw) return;
+                var s = JSON.parse(raw);
+                if (!s || !s.purposes) return;
+                var analyticsOk = s.purposes.analytics === 'accepted';
+                var adsOk       = s.purposes.ads === 'accepted';
+                gtag('consent', 'update', {
+                    analytics_storage:  analyticsOk ? 'granted' : 'denied',
+                    ad_storage:         adsOk ? 'granted' : 'denied',
+                    ad_user_data:       adsOk ? 'granted' : 'denied',
+                    ad_personalization: adsOk ? 'granted' : 'denied',
+                });
+            } catch (e) {}
+        }
+
+        applyStoredConsent();
+        document.addEventListener('__acceptrics_consent_updated', applyStoredConsent);
     }
-
-    applyStoredConsent();
-    document.addEventListener('__acceptrics_consent_updated', applyStoredConsent);
 
     // ---------------------------------------------------------------------------
     // Script loader
