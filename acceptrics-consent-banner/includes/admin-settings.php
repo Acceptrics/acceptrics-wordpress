@@ -3,6 +3,12 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+// Account-creation endpoint (same Lambda the acceptrics.com wizard uses).
+// Creates the account, generates the banner config, and emails the code.
+if (!defined('ACCEPTRICS_ACCOUNT_API_URL')) {
+    define('ACCEPTRICS_ACCOUNT_API_URL', 'https://guirl4277ftmhefw2fzuvwqpqe0zdtca.lambda-url.us-west-2.on.aws/');
+}
+
 function acceptrics_add_admin_menu() {
     add_options_page(
         'Acceptrics Consent Banner',
@@ -43,6 +49,90 @@ function acceptrics_sanitize_account_id($value) {
     return preg_replace('/[^a-zA-Z0-9_\-]/', '', $value);
 }
 
+// AJAX: Create an Acceptrics account from the settings page for customers who
+// installed the plugin without one. Calls the account Lambda server-side (no
+// CORS exposure), saves the returned code, and enables the banner.
+add_action('wp_ajax_acceptrics_create_account', 'acceptrics_handle_create_account');
+function acceptrics_handle_create_account() {
+    check_ajax_referer('acceptrics_create_account_nonce', 'nonce');
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Unauthorized.']);
+    }
+    // Idempotence guard: never overwrite an already-configured account.
+    if (get_option('acceptrics_account_id', '') !== '') {
+        wp_send_json_error(['message' => 'An account code is already configured. Remove it first if you want to create a new account.']);
+    }
+
+    $email = sanitize_email(wp_unslash($_POST['email'] ?? ''));
+    if (!is_email($email)) {
+        wp_send_json_error(['message' => 'Please enter a valid email address.']);
+    }
+
+    $geo_area = sanitize_text_field(wp_unslash($_POST['geo_area'] ?? 'eea'));
+    if (!in_array($geo_area, ['eea', 'worldwide'], true)) {
+        $geo_area = 'eea';
+    }
+
+    // Mirror the acceptrics.com wizard defaults so a plugin-created account
+    // behaves identically to a wizard-created one.
+    $document = [
+        'gcmAdvanced'           => true,
+        'backgroundColor'       => '',
+        'fontColor'             => '',
+        'geoArea'               => $geo_area,
+        'respectGPC'            => true,
+        'useTranslation'        => true,
+        'bannerStyle'           => '',
+        'ec'                    => false,
+        'autoIncludeAllCookies' => true,
+        'theme'                 => 'theme-default',
+    ];
+
+    $response = wp_remote_post(ACCEPTRICS_ACCOUNT_API_URL, [
+        'timeout' => 20,
+        'headers' => ['Content-Type' => 'application/json'],
+        'body'    => wp_json_encode(['email' => $email, 'document' => $document]),
+    ]);
+
+    if (is_wp_error($response)) {
+        wp_send_json_error(['message' => 'Could not reach Acceptrics. Please check your connection and try again.']);
+    }
+
+    $status = wp_remote_retrieve_response_code($response);
+    $data   = json_decode(wp_remote_retrieve_body($response), true);
+
+    if (is_array($data) && ($data['message'] ?? '') === 'Conflict') {
+        wp_send_json_error(['message' =>
+            'This email is already registered. Your account code is in your welcome email, '
+            . 'or <a href="https://acceptrics.com/auth/login" target="_blank" rel="noopener">log in to your account</a> to retrieve it.'
+        ]);
+    }
+    if ($status === 429) {
+        wp_send_json_error(['message' => 'Too many attempts. Please wait a few seconds and try again.']);
+    }
+    if ($status !== 200 || !is_array($data) || empty($data['accountNum'])) {
+        wp_send_json_error(['message' =>
+            'Account creation failed. Please try again, or '
+            . '<a href="https://acceptrics.com/wizard" target="_blank" rel="noopener">sign up at acceptrics.com</a>.'
+        ]);
+    }
+
+    $account_id = acceptrics_sanitize_account_id($data['accountNum']);
+    if ($account_id === '') {
+        wp_send_json_error(['message' => 'Received an invalid account code. Please try again.']);
+    }
+
+    $GLOBALS['acceptrics_skip_account_event'] = true;
+    update_option('acceptrics_account_id', $account_id);
+    update_option('acceptrics_enable_banner', 1);
+    // Remember the region so the Status card can explain where the banner shows.
+    update_option('acceptrics_geo_area', $geo_area);
+    $GLOBALS['acceptrics_skip_account_event'] = false;
+    acceptrics_track('wp_account_created', ['method' => 'embedded_signup', 'geo_area' => $geo_area]);
+
+    wp_send_json_success(['accountNum' => $account_id]);
+}
+
 function acceptrics_is_wp_consent_api_active() {
     include_once ABSPATH . 'wp-admin/includes/plugin.php';
     return is_plugin_active('wp-consent-api/wp-consent-api.php');
@@ -65,6 +155,22 @@ function acceptrics_enqueue_relay_scripts($hook) {
         'acceptricsRelayData',
         acceptrics_relay_get_js_data()
     );
+    wp_enqueue_script(
+        'acceptrics-account-create',
+        ACCEPTRICS_PLUGIN_URL . 'includes/js/account-create.js',
+        ['jquery'],
+        ACCEPTRICS_VERSION,
+        true
+    );
+    wp_localize_script(
+        'acceptrics-account-create',
+        'acceptricsCreateData',
+        [
+            'ajaxUrl'        => admin_url('admin-ajax.php'),
+            'nonce'          => wp_create_nonce('acceptrics_create_account_nonce'),
+            'telemetryNonce' => wp_create_nonce('acceptrics_telemetry_nonce'),
+        ]
+    );
 }
 add_action('admin_enqueue_scripts', 'acceptrics_enqueue_relay_scripts');
 
@@ -78,6 +184,8 @@ function acceptrics_settings_page() {
     $is_consent_api_active = acceptrics_is_wp_consent_api_active();
     $account_id            = get_option('acceptrics_account_id', '');
     $enable_banner         = get_option('acceptrics_enable_banner', false);
+    $geo_area              = get_option('acceptrics_geo_area', '');
+    $site_host_display     = wp_parse_url(home_url(), PHP_URL_HOST);
     $plugin_install_url    = admin_url('plugin-install.php?s=WP+Consent+API&tab=search&type=term');
     $geoip_active          = function_exists('geoip_detect2_get_info_from_current_ip');
     $geoip_install_url     = current_user_can('install_plugins')
@@ -150,6 +258,19 @@ function acceptrics_settings_page() {
             margin-bottom: 20px;
         }
         #acceptrics-admin .acpt-card h2 { margin: 0 0 6px; font-size: 16px; font-weight: 600; color: #333; }
+        #acceptrics-admin .acpt-status-grid { display: flex; flex-direction: column; gap: 14px; }
+        #acceptrics-admin .acpt-status-item { display: flex; gap: 10px; align-items: flex-start; }
+        #acceptrics-admin .acpt-status-item strong { font-size: 13px; color: #333; }
+        #acceptrics-admin .acpt-status-item-desc { font-size: 12px; color: #888; margin-top: 2px; }
+        #acceptrics-admin .acpt-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+        #acceptrics-admin .acpt-dot.on  { background: #4CAF50; box-shadow: 0 0 0 3px #e8f5e9; }
+        #acceptrics-admin .acpt-dot.off { background: #cfcfcf; box-shadow: 0 0 0 3px #f4f4f4; }
+        #acceptrics-admin .acpt-create-geo { margin: 12px 0; }
+        #acceptrics-admin .acpt-create-geo label { display: block; margin-bottom: 8px; }
+        #acceptrics-admin .acpt-geo-hint { display: block; margin-left: 24px; font-size: 12px; color: #888; }
+        #acceptrics-admin .acpt-create-terms { margin-top: 12px; }
+        #acceptrics-admin .acpt-status-ok { color: #1a7a2e; font-weight: 600; }
+        #acceptrics-admin .acpt-status-err { color: #b00020; font-weight: 600; }
         #acceptrics-admin .acpt-card .acpt-card-desc { margin: 0 0 18px; font-size: 13px; color: #666; }
         #acceptrics-admin .acpt-card .acpt-card-desc a { color: #4CAF50; text-decoration: none; }
         #acceptrics-admin .acpt-card .acpt-card-desc a:hover { text-decoration: underline; }
@@ -502,10 +623,69 @@ function acceptrics_settings_page() {
             <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner&tab=settings')); ?>"
                class="<?php echo ($active_tab === 'settings') ? 'active' : ''; ?>">Settings</a>
             <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner&tab=report')); ?>"
-               class="<?php echo ($active_tab === 'report') ? 'active' : ''; ?>">Report</a>
+               class="<?php echo ($active_tab === 'report') ? 'active' : ''; ?>">Analytics Report</a>
         </nav>
 
         <?php if ($active_tab === 'settings') : ?>
+
+        <?php if (acceptrics_telemetry_state() === '') : ?>
+        <!-- One-time telemetry opt-in prompt (wp.org: informed consent required) -->
+        <div class="acpt-card" id="acpt-telemetry-prompt" style="border-left:3px solid #B469B5;">
+            <p class="acpt-card-desc" style="margin:0 0 10px;">
+                <strong>Share anonymous usage data?</strong>
+                Help improve this plugin by sending product events &mdash; activation, setup steps
+                completed, WordPress/PHP version, and your site domain &mdash; to Acceptrics analytics.
+                <strong>Never anything about your visitors.</strong>
+                <a href="https://acceptrics.com/assets/policy.pdf" target="_blank" rel="noopener">Privacy Policy</a>
+            </p>
+            <button type="button" class="button button-primary" id="acpt-tel-allow">Allow</button>
+            <button type="button" class="button" id="acpt-tel-deny" style="margin-left:6px;">No thanks</button>
+        </div>
+        <?php endif; ?>
+
+        <?php if (empty($account_id)) : ?>
+        <!-- ============================================================
+             Embedded account creation (no account configured yet)
+             ============================================================ -->
+        <div class="acpt-card" id="acpt-create-account-card">
+            <h2>New to Acceptrics? Create your free account</h2>
+            <p class="acpt-card-desc">
+                Create an account right here — your banner code is generated and saved
+                automatically, and the consent banner goes live on your site.
+                Free up to 50,000 page views/month, no credit card required.
+            </p>
+            <div class="acpt-field-row">
+                <input
+                    type="email"
+                    id="acpt-create-email"
+                    value="<?php echo esc_attr(get_option('admin_email', '')); ?>"
+                    placeholder="you@example.com"
+                    autocomplete="email"
+                    spellcheck="false"
+                />
+            </div>
+            <div class="acpt-create-geo">
+                <label>
+                    <input type="radio" name="acpt_create_geo" value="eea" checked />
+                    Show the banner to EU/EEA visitors only
+                    <span class="acpt-geo-hint">recommended for most sites; visitors elsewhere browse without a prompt</span>
+                </label>
+                <label>
+                    <input type="radio" name="acpt_create_geo" value="worldwide" />
+                    Show the banner to all visitors worldwide
+                </label>
+            </div>
+            <p class="acpt-hint" id="acpt-create-status" role="status" aria-live="polite"></p>
+            <button type="button" class="button button-primary" id="acpt-create-btn">Create account &amp; enable banner</button>
+            <p class="acpt-hint acpt-create-terms">
+                By creating an account you agree to the
+                <a href="https://acceptrics.com/assets/terms.pdf" target="_blank" rel="noopener">Terms of Service</a> and
+                <a href="https://acceptrics.com/assets/policy.pdf" target="_blank" rel="noopener">Privacy Policy</a>.
+                Your banner code will also be emailed to you. You can customize the banner anytime at
+                <a href="https://acceptrics.com/auth/login" target="_blank" rel="noopener">acceptrics.com</a>.
+            </p>
+        </div>
+        <?php endif; ?>
 
         <!-- ============================================================
              Standard settings (account code + WP Consent API status)
@@ -538,8 +718,8 @@ function acceptrics_settings_page() {
                     <p class="acpt-hint">This script is injected into the &lt;head&gt; of every page on your site.</p>
                 <?php else : ?>
                     <p class="acpt-hint">
-                        Don't have an account yet?
-                        <a href="<?php echo esc_url($wizard_url); ?>" target="_blank">Sign up free at acceptrics.com/wizard</a>
+                        Don't have an account yet? Create one in the card above,
+                        or <a href="<?php echo esc_url($wizard_url); ?>" target="_blank">sign up at acceptrics.com/wizard</a>.
                     </p>
                 <?php endif; ?>
             </div>
@@ -547,15 +727,99 @@ function acceptrics_settings_page() {
             <!-- Status card -->
             <div class="acpt-card">
                 <h2>Status</h2>
-                <div class="acpt-toggle-row">
-                    <input type="checkbox" name="acceptrics_enable_banner" id="acceptrics_enable_banner" value="1" <?php checked(1, $enable_banner); ?> style="margin-top:2px;" />
-                    <div>
-                        <label for="acceptrics_enable_banner">Enable consent banner</label>
-                        <div class="acpt-toggle-desc">
-                            Loads the WP Consent API integration alongside your Acceptrics banner.
+                <div class="acpt-status-grid">
+                    <div class="acpt-status-item">
+                        <span class="acpt-dot <?php echo $account_id ? 'on' : 'off'; ?>"></span>
+                        <div>
+                            <strong>Consent banner</strong>
+                            <div class="acpt-status-item-desc">
+                                <?php if ($account_id && $geo_area === 'eea') : ?>
+                                    Live on <?php echo esc_html($site_host_display); ?> for EU/EEA visitors.
+                                    Browsing from outside the EU, you may not see it yourself.
+                                <?php elseif ($account_id && $geo_area === 'worldwide') : ?>
+                                    Live on <?php echo esc_html($site_host_display); ?> for all visitors.
+                                <?php elseif ($account_id) : ?>
+                                    Live on every page of <?php echo esc_html($site_host_display); ?>.
+                                <?php else : ?>
+                                    Not connected &mdash; create an account or enter your account code above.
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="acpt-status-item">
+                        <span class="acpt-dot <?php echo $consent_mode_enabled ? 'on' : 'off'; ?>"></span>
+                        <div>
+                            <strong>Google Consent Mode</strong>
+                            <div class="acpt-status-item-desc">
+                                <?php echo $consent_mode_enabled
+                                    ? 'On &mdash; consent defaults set to denied before Google tags load.'
+                                    : 'Off &mdash; Acceptrics is not sending consent signals to Google tags.'; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="acpt-status-item">
+                        <span class="acpt-dot <?php echo ($is_consent_api_active && $enable_banner) ? 'on' : 'off'; ?>"></span>
+                        <div>
+                            <strong>WP Consent API sync</strong>
+                            <div class="acpt-status-item-desc">
+                                <?php if (!$is_consent_api_active) : ?>
+                                    WP Consent API plugin not installed &mdash; consent choices stay within Acceptrics.
+                                <?php elseif (!$enable_banner) : ?>
+                                    Installed, sync off &mdash; enable it below to share consent with other plugins.
+                                <?php else : ?>
+                                    Syncing consent choices to other plugins.
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="acpt-status-item">
+                        <span class="acpt-dot <?php echo ($relay_state === 'active') ? 'on' : 'off'; ?>"></span>
+                        <div>
+                            <strong>Tag Relay (Analytics Recovery)</strong>
+                            <div class="acpt-status-item-desc">
+                                <?php if ($relay_state === 'active') : ?>
+                                    Active &mdash; see the <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner&tab=report')); ?>">Analytics Report</a> tab for recovery data.
+                                <?php else : ?>
+                                    Not active &mdash; optional; set it up in Analytics Recovery below.
+                                <?php endif; ?>
+                            </div>
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Integrations Card -->
+            <div class="acpt-card">
+                <h2>Integrations</h2>
+                <?php if ($is_consent_api_active) : ?>
+                <div class="acpt-toggle-row">
+                    <input type="checkbox" name="acceptrics_enable_banner" id="acceptrics_enable_banner" value="1" <?php checked(1, $enable_banner); ?> style="margin-top:2px;" />
+                    <div>
+                        <label for="acceptrics_enable_banner">Sync consent with other plugins (WP Consent API)</label>
+                        <div class="acpt-toggle-desc">
+                            Bridges your visitors' Acceptrics consent choices to the WP Consent API so
+                            other plugins can respect them. The banner itself is controlled by the
+                            account code above &mdash; it shows whenever a code is saved.
+                        </div>
+                    </div>
+                </div>
+                <?php else : ?>
+                <?php /* Preserve the saved sync preference while the checkbox is not rendered —
+                         options.php writes every registered setting on save, so an absent field
+                         would silently wipe the option. */ ?>
+                <input type="hidden" name="acceptrics_enable_banner" value="<?php echo $enable_banner ? '1' : ''; ?>" />
+                <div class="acpt-toggle-row">
+                    <div style="flex:1;">
+                        <label>Sync consent with other plugins (WP Consent API)</label>
+                        <div class="acpt-toggle-desc">
+                            Bridges your visitors' Acceptrics consent choices to the WP Consent API so
+                            other plugins can respect them. Install the free WP Consent API plugin to
+                            enable syncing. The banner itself works without it.
+                        </div>
+                    </div>
+                    <a href="<?php echo esc_url($plugin_install_url); ?>" class="acpt-install-btn" style="align-self:center;flex-shrink:0;">Install Plugin</a>
+                </div>
+                <?php endif; ?>
                 <div class="acpt-toggle-row">
                     <input type="checkbox" name="acceptrics_blocker_detect_enabled" id="acceptrics_blocker_detect_enabled"
                            value="1" <?php checked(1, $detect_enabled); ?> style="margin-top:2px;" />
@@ -563,11 +827,25 @@ function acceptrics_settings_page() {
                         <label for="acceptrics_blocker_detect_enabled">Enable blocker detection</label>
                         <div class="acpt-toggle-desc">
                             Samples 10% of page loads to estimate how many visitors have ad blockers.
-                            Results appear in the <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner&tab=report')); ?>">Report</a> tab.
+                            Results appear in the <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner&tab=report')); ?>">Analytics Report</a> tab.
                             Adds ~1ms on sampled visits only.
                         </div>
                     </div>
                 </div>
+                <?php $acpt_tel_state = acceptrics_telemetry_state(); ?>
+                <?php if ($acpt_tel_state !== '') : ?>
+                <div class="acpt-toggle-row">
+                    <div style="flex:1;">
+                        <label>Anonymous usage data</label>
+                        <div class="acpt-toggle-desc">
+                            Currently <strong><?php echo $acpt_tel_state === 'granted' ? 'on' : 'off'; ?></strong> &mdash;
+                            product events only (setup steps, versions, site domain), never visitor data.
+                            <a href="#" id="acpt-tel-toggle" data-next="<?php echo $acpt_tel_state === 'granted' ? 'denied' : 'granted'; ?>">
+                                Turn <?php echo $acpt_tel_state === 'granted' ? 'off' : 'on'; ?></a>
+                        </div>
+                    </div>
+                </div>
+                <?php endif; ?>
                 <div class="acpt-toggle-row">
                     <input type="checkbox" name="acceptrics_consent_mode_enabled" id="acceptrics_consent_mode_enabled"
                            value="1" <?php checked(1, $consent_mode_enabled); ?> style="margin-top:2px;" />
@@ -581,24 +859,9 @@ function acceptrics_settings_page() {
                     </div>
                 </div>
 
-                <!-- Dependencies — visually separated from toggles -->
-                <div style="margin-top:14px;padding-top:14px;border-top:1px solid #f0f0f0;">
-                    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#bbb;margin-bottom:8px;">Dependencies</div>
-                    <div class="acpt-status-row">
-                        <div>
-                            <span style="font-size:13px;font-weight:500;color:#555;">WP Consent API</span>
-                            <div style="font-size:12px;color:#888;margin-top:2px;">Required for consent signals to propagate to other plugins.</div>
-                        </div>
-                        <?php if ($is_consent_api_active) : ?>
-                            <span class="acpt-badge active">&#x2713; Installed</span>
-                        <?php else : ?>
-                            <a href="<?php echo esc_url($plugin_install_url); ?>" class="acpt-install-btn">Install Plugin</a>
-                        <?php endif; ?>
-                    </div>
-                </div>
             </div>
 
-            <?php submit_button('Save Settings', 'primary', 'submit', true); ?>
+            <?php submit_button('Save Banner Settings', 'primary', 'submit', true); ?>
         </form>
 
         <!-- ============================================================
@@ -673,7 +936,7 @@ function acceptrics_settings_page() {
             <div class="acpt-relay-step" id="acpt-step-token">
                 <button type="button" class="acpt-back-link" data-goto="mode-select">&#8592; Change relay type</button>
                 <h3 class="acpt-step-heading">
-                    <span class="acpt-step-num">1</span> Connect your Acceptrics account
+                    <span class="acpt-step-num">2</span> Connect your Acceptrics account
                 </h3>
                 <p style="font-size:13px;color:#666;margin:4px 0 16px;">
                     Generate an API token in your
@@ -709,7 +972,7 @@ function acceptrics_settings_page() {
                 <?php endif; ?>
 
                 <h3 class="acpt-step-heading">
-                    <span class="acpt-step-num">2</span> Configure your subdomain
+                    <span class="acpt-step-num">3</span> Configure your subdomain
                 </h3>
                 <p style="font-size:13px;color:#666;margin:4px 0 16px;">
                     Enter the Google Tag ID to route through your subdomain. We'll provision a
@@ -730,6 +993,7 @@ function acceptrics_settings_page() {
                 </div>
                 <p style="font-size:11px;color:#999;margin:0 0 14px;">
                     Supports G-, GTM-, AW-, DC- prefixes. The first tag is the primary — the relay subdomain will be named after it.
+                    Find your ID in Google Analytics under <strong>Admin &rarr; Data Streams</strong>, or your container ID at <a href="https://tagmanager.google.com" target="_blank" rel="noopener">tagmanager.google.com</a>.
                 </p>
 
                 <label class="acpt-field-label" for="acpt-subdomain-input">Relay subdomain</label>
@@ -797,7 +1061,8 @@ function acceptrics_settings_page() {
                     />
                     <button type="button" id="acpt-btn-path-add-tag" class="acpt-btn-secondary" style="margin-top:0;">Add tag</button>
                 </div>
-                <p style="font-size:11px;color:#999;margin:0 0 14px;">Supports G-, GTM-, AW-, DC- prefixes.</p>
+                <p style="font-size:11px;color:#999;margin:0 0 14px;">Supports G-, GTM-, AW-, DC- prefixes.
+                    Find your ID in Google Analytics under <strong>Admin &rarr; Data Streams</strong>, or your container ID at <a href="https://tagmanager.google.com" target="_blank" rel="noopener">tagmanager.google.com</a>.</p>
 
                 <label class="acpt-field-label" for="acpt-threshold-input" style="margin-top:18px;">
                     Fallback threshold
@@ -857,7 +1122,7 @@ function acceptrics_settings_page() {
                 <?php endif; ?>
 
                 <h3 class="acpt-step-heading">
-                    <span class="acpt-step-num">3</span> Add two DNS records
+                    <span class="acpt-step-num">4</span> Add two DNS records
                 </h3>
                 <p style="font-size:13px;color:#666;margin:4px 0 16px;">
                     Add both records to your DNS for
@@ -1145,6 +1410,28 @@ function acceptrics_settings_page() {
         <?php endif; // end settings tab ?>
 
         <?php if ($active_tab === 'report') : ?>
+
+        <!-- ============================================================
+             Scope note — this tab is about analytics recovery, not the banner
+             ============================================================ -->
+        <?php $acpt_relay_is_active = (get_option('acceptrics_relay_status') === 'active'); ?>
+        <div class="acpt-card" style="border-left:3px solid #B469B5;">
+            <p class="acpt-card-desc" style="margin:0;">
+                This report is about <strong>analytics recovery (Tag Relay)</strong>: how many of your
+                visitors block third-party analytics, and what routing tags through your own domain
+                recovers. Your <strong>consent banner is not affected by ad blockers</strong> and isn't
+                measured here &mdash; it works the same whether or not you use Tag Relay.
+                <?php if ($acpt_relay_is_active) : ?>
+                    Tag Relay is <strong>active</strong> on this site, so the numbers below include
+                    the traffic it recovers.
+                <?php else : ?>
+                    Tag Relay is <strong>not active</strong> on this site &mdash; use blocker detection
+                    below to see how much analytics data you're losing and whether
+                    <a href="<?php echo esc_url(admin_url('options-general.php?page=acceptrics-consent-banner&tab=settings')); ?>">Analytics Recovery</a>
+                    is worth enabling.
+                <?php endif; ?>
+            </p>
+        </div>
 
         <!-- ============================================================
              Blocker detection toggle (saved via report tab form)

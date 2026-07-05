@@ -643,30 +643,61 @@
         // ==================================================================
         $('#acpt-btn-test-relay').on('click', function () {
             var hostname = cfg.relayHostname || $('#acpt-detail-hostname').text().trim();
-            var tagId    = cfg.tagId         || $('#acpt-detail-tag-id').text().trim();
-            if (!hostname || !tagId) return;
+            if (!hostname) return;
 
             var $btn    = $(this).prop('disabled', true).text('Testing…');
             var $result = $('#acpt-test-result').hide();
-            var isGtm   = /^GTM-/i.test(tagId);
-            var testUrl = 'https://' + hostname + (isGtm ? '/gtm.js?id=' + tagId : '/gtag/js?id=' + tagId);
+            var mode    = cfg.relayMode || 'dns';
 
-            fetch(testUrl, { method: 'HEAD', mode: 'no-cors' })
-                .then(function () {
-                    $result
-                        .css({ color: '#2e7d32', background: '#e8f5e9', padding: '4px 10px', borderRadius: '4px' })
-                        .text('✓ Relay is responding')
-                        .show();
-                })
-                .catch(function () {
-                    $result
-                        .css({ color: '#c62828', background: '#fce4ec', padding: '4px 10px', borderRadius: '4px' })
-                        .text('✗ Could not reach relay — DNS may still be propagating')
-                        .show();
-                })
-                .finally(function () {
-                    $btn.prop('disabled', false).text('Test relay connection');
-                });
+            function pass(msg) {
+                $result.css({ color: '#2e7d32', background: '#e8f5e9', padding: '4px 10px', borderRadius: '4px' }).text(msg).show();
+            }
+            function failMsg(msg) {
+                $result.css({ color: '#c62828', background: '#fce4ec', padding: '4px 10px', borderRadius: '4px' }).text(msg).show();
+            }
+
+            // Probe /healthy: it round-trips through the relay to Google's gateway
+            // (fps.goog) and — unlike /gtag/js — its URL doesn't match ad-blocker
+            // filter patterns, so the admin's own blocker can't fail the test.
+            var base = hostname.replace(/\/+$/, '');
+            var bust = '?_t=' + Date.now();
+
+            if (mode === 'path') {
+                // The relay path lives on this same site by definition — build the
+                // probe from the browser's own origin (the stored hostname omits
+                // non-standard ports and would break dev/staging sites).
+                var relayPath = base.indexOf('/') !== -1
+                    ? base.slice(base.indexOf('/') + 1)
+                    : (cfg.metricsPath || 'metrics');
+                var healthUrl = window.location.origin + '/' + relayPath + '/healthy' + bust;
+                fetch(healthUrl, { method: 'GET', cache: 'no-store' })
+                    .then(function (r) {
+                        if (r.ok) {
+                            pass('✓ Relay is responding — round trip to Google\u2019s gateway succeeded');
+                        } else {
+                            failMsg('✗ Relay path reached but returned HTTP ' + r.status + ' — a caching or security plugin may be intercepting it');
+                        }
+                    })
+                    .catch(function () {
+                        failMsg('✗ Could not reach the relay path — check for caching or security plugins intercepting it');
+                    })
+                    .finally(function () {
+                        $btn.prop('disabled', false).text('Test relay connection');
+                    });
+            } else {
+                // Cross-origin subdomain: response is opaque, but a resolved fetch
+                // proves DNS resolves and the certificate is valid.
+                fetch('https://' + base + '/healthy' + bust, { method: 'GET', mode: 'no-cors', cache: 'no-store' })
+                    .then(function () {
+                        pass('✓ Relay is reachable — DNS and SSL certificate are working');
+                    })
+                    .catch(function () {
+                        failMsg('✗ Could not reach relay — DNS may still be propagating or the SSL certificate is still issuing');
+                    })
+                    .finally(function () {
+                        $btn.prop('disabled', false).text('Test relay connection');
+                    });
+            }
         });
 
         // ==================================================================

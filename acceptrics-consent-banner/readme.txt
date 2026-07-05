@@ -4,7 +4,7 @@ Donate link: https://acceptrics.com
 Tags: consent, banner, cookie, GDPR, analytics, ad blocker, Google Tag Gateway
 Requires at least: 5.9
 Tested up to: 7.0
-Stable tag: 2.9
+Stable tag: 2.10
 Requires PHP: 7.4
 License: GPL-2.0+
 License URI: http://www.gnu.org/licenses/gpl-2.0.txt
@@ -118,6 +118,15 @@ Privacy Policy: https://acceptrics.com/privacy
 
 == Changelog ==
 
+= 2.10 =
+* New Status card: see at a glance whether the banner is live (and for which visitors), plus Consent Mode, WP Consent API sync, and Tag Relay state
+* Settings UX: WP Consent API install and sync merged into one Integrations row; clearer relay setup steps and tag-ID help; relay connection test now probes the blocker-safe /healthy endpoint end to end
+* Analytics Report tab clearly scoped: it covers analytics recovery, not the consent banner
+* Optional anonymous usage data (opt-in): product events only — activation, setup steps, WordPress/PHP version, site domain — never anything about your visitors. Off unless you allow it; change anytime under Integrations
+* Create your Acceptrics account without leaving WordPress: enter your email on the settings page, pick where the banner should appear (EU/EEA or worldwide), and the plugin creates the account, saves your banner code, and enables the banner automatically
+* Existing accounts are never overwritten; if the email is already registered, the plugin points you to your welcome email or account login
+* Your banner code is still emailed to you as a permanent record
+
 = 2.9 =
 * Added Analytics Recovery tab in the admin UI — shows blocker detection data, uplift estimate, and 7-day breakdown
 * Added blocker detection: samples 10% of page loads to estimate what percentage of visitors have ad blockers (opt-in, configurable)
@@ -145,6 +154,9 @@ Privacy Policy: https://acceptrics.com/privacy
 * Initial release.
 
 == Upgrade Notice ==
+
+= 2.10 =
+No Acceptrics account yet? You can now create one directly from Settings → Acceptrics Consent Banner — banner live in under a minute.
 
 = 2.9 =
 New Analytics Recovery tab with blocker detection. Enable in Settings → Acceptrics Consent Banner → Status → "Enable blocker detection" to start measuring your ad blocker exposure.
