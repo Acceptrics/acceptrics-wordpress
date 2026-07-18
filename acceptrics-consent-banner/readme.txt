@@ -9,11 +9,11 @@ Requires PHP: 7.4
 License: GPL-2.0+
 License URI: http://www.gnu.org/licenses/gpl-2.0.txt
 
-GDPR-compliant consent banner with built-in analytics recovery — get back data lost to ad blockers without any DNS changes.
+GDPR-compliant consent banner with Google Tag Gateway (GTG) analytics recovery — get back data lost to ad blockers, no DNS changes needed.
 
 == Description ==
 
-Acceptrics is a consent management platform that recovers analytics and conversion data lost to ad blockers and browser privacy restrictions — without any DNS changes to get started.
+Acceptrics is a consent management platform with a built-in **Google Tag Gateway (GTG)** implementation: it recovers analytics and conversion data lost to ad blockers and browser privacy restrictions — without any DNS changes to get started. If Google has recommended Tag Gateway for your site, installing this plugin is the fastest way to adopt it on WordPress.
 
 **The problem:** 25–40% of your visitors use ad blockers or browsers that block third-party tracking requests by default (Safari ITP, Brave, Firefox Enhanced Tracking Protection). That means up to 40% of your Google Analytics events, conversion signals, and remarketing data never reaches Google.
 
@@ -23,7 +23,7 @@ Acceptrics is a consent management platform that recovers analytics and conversi
 
 = Features =
 
-* **Analytics recovery** — route Google tags through your WordPress server to recover data blocked by ad blockers and browsers
+* **Google Tag Gateway (GTG)** — route Google tags through your WordPress server to recover data blocked by ad blockers and browsers
 * **Zero DNS setup** — activate immediately with the Server Path mode; no DNS records or certificate required
 * **Automatic fallback** — if your server is slow, the plugin falls back to direct Google endpoints and retries automatically
 * **Blocker detection** — samples 10% of page loads to estimate what percentage of your visitors have ad blockers, and shows an uplift estimate in the report tab
